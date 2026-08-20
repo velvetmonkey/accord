@@ -87,4 +87,4 @@ illegal construction, green on the legal one.
 | [agency-boundary](https://github.com/velvetmonkey/agency-boundary) | Roles, delegation and standing for persistent agents. |
 | [seal](https://github.com/velvetmonkey/seal) | The finished authority boundary. One exact effect, one receipt. |
 
-Licence: not yet chosen.
+Licence: [Apache-2.0](LICENSE).
