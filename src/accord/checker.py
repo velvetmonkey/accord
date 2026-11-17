@@ -170,6 +170,7 @@ class _Formation:
     current_digest: str | None = None
     proposals: dict[str, _Event] = field(default_factory=dict)  # digest -> proposal
     blocked: bool = False
+    vetoes: dict[str, int] = field(default_factory=dict)  # digest -> first VETO position
     closed: bool = False  # referee ABORT
     formed: tuple[str, _Event, int] | None = None  # digest, proposal, formation tick
     mandates: dict[str, _Event] = field(default_factory=dict)  # mandate message id -> event
@@ -251,6 +252,8 @@ class _Formation:
             return False
         if acc["digest"] != self.current_digest or acc["id"] in self.revoked_accepts:
             return False
+        if ev.pos > self.vetoes.get(acc["digest"], ev.pos):
+            return False  # A VETO rejects new consent, but does not revoke earlier ACCEPT.
         if self.pause_pos is not None and (ev.pos < self.pause_pos or not self.resumed()):
             return False
         proposal = self.current.msg
@@ -280,7 +283,9 @@ class _Formation:
 
     def apply(self, ev: _Event) -> None:
         if self.formed is not None:
-            return  # Form at most once. Later events cannot change the deal.
+            if ev.msg["kind"] in ("FORM", "ABORT"):
+                self._record_referee_decision(ev)
+            return  # Keep the formed deal while collecting signed conflicts.
         handler = getattr(self, "on_" + ev.msg["kind"].lower(), None)
         if handler is not None:
             handler(ev)
@@ -402,6 +407,8 @@ class _Formation:
         if word == "DEFER" and not self.responses + 1 < msg["retry_round"] <= 6:
             return
         self.responses += 1
+        if word == "VETO":
+            self.vetoes.setdefault(msg["digest"], ev.pos)
         if word == "ASK_HUMAN":
             self.pending.clear()
             self.pause_pos = ev.pos
@@ -414,11 +421,17 @@ class _Formation:
             and self.current.msg["mode"] == "referee"
         )
 
-    def on_form(self, ev: _Event) -> None:
+    def _record_referee_decision(self, ev: _Event) -> bool:
         msg = ev.msg
         if msg["signer"] != self.session.msg["referee"] or not self._referee_mode():
-            return
+            return False
         self.referee_decisions.add(m.canonical(msg))
+        return True
+
+    def on_form(self, ev: _Event) -> None:
+        msg = ev.msg
+        if not self._record_referee_decision(ev):
+            return
         if self.closed or msg["digest"] != self.current_digest:
             return
         accepts = [self.pending.get(a) for a in self.session.agents]
@@ -428,9 +441,8 @@ class _Formation:
 
     def on_abort(self, ev: _Event) -> None:
         msg = ev.msg
-        if msg["signer"] != self.session.msg["referee"] or not self._referee_mode():
+        if not self._record_referee_decision(ev):
             return
-        self.referee_decisions.add(m.canonical(msg))
         if msg["digest"] == self.current_digest and ev.tick < self.session.msg["expiry"]:
             self.closed = True
 
@@ -584,7 +596,7 @@ def _decide(obl: dict[str, Any], ev: _ObligationEvidence, now: int) -> str:
             return "performed" if cov_qty >= need else "failed"
     elif cov_qty is not None:
         return "performed" if cov_qty >= need else "failed"
-    return "pending" if now <= obl["deadline"] else "unknown"
+    return "pending" if now < obl["deadline"] else "unknown"
 
 
 def _performance(
@@ -712,6 +724,23 @@ def _check(t: Any) -> dict[str, Any]:
 
     if len(state.referee_decisions) > 1:
         raise _Unknown("conflicting referee decisions")
+
+    # Authenticate all receipts before any terminal decision, even without a deal.
+    receipts = t.get("receipts", [])
+    if type(receipts) is not list:
+        return result(None, "unknown", "formed") if state.formed else _unknown()
+    for text in receipts:
+        try:
+            raw = m.b64url_decode(text, m.MAX_SIGNED_MESSAGE_BYTES)
+        except m.Rejected:
+            continue
+        auth = m.authenticate(raw, key_for)
+        if auth is None:
+            continue
+        key, signed = auth
+        if key in seen and seen[key] != signed:
+            return result(None, "unknown", "formed") if state.formed else _unknown()
+        seen[key] = signed
 
     if state.formed is None:
         if min(cp["cutoff"], now) >= smsg["expiry"]:

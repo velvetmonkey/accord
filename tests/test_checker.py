@@ -3,7 +3,7 @@
 tests/fixtures/transcripts.jsonl holds one transcript per line with its
 expected result, stored before evaluation. The cases 01 to 39 are the
 research worked examples in spec/evidence.md, regenerated with Ed25519 and
-the spec encoding. Cases 40 to 45 add wire-level checks.
+the spec encoding. Cases 40 to 45 add wire-level checks. Case 46 checks cross-revision receipt collisions.
 
 The fixture is generated from fixed synthetic seeds by build_cases() below.
 Ed25519 signatures are deterministic, so test_fixture_is_reproducible proves
@@ -442,7 +442,8 @@ def case_08():
     s.add(s.accept("aA", d1, 3))
     s.add(s.accept("aB", d1, 4))
     s.done(d1)
-    s.done(digest_of(p2), completed=16)
+    for oid in ("oA", "oB"):
+        s.outcome(digest_of(p2), oid, "done", 1, 16, 17, ident=f"rev2out{oid}")
     return s, never_formed()
 
 
@@ -754,6 +755,17 @@ def case_45():
     return s, unknown_formation()
 
 
+def case_46():
+    """Authenticated receipt IDs cannot be reused across proposal digests."""
+    s, d1 = base()
+    p2 = s.add(s.propose("prop2", 2, 2, d1))
+    s.add(s.accept("aA", d1, 3))
+    s.add(s.accept("aB", d1, 4))
+    s.outcome(d1, "oA", "done", 1, 15, 16, ident="collision")
+    s.outcome(digest_of(p2), "oA", "done", 1, 16, 17, ident="collision")
+    return s, unknown_formation()
+
+
 CASES = [
     ("01_honoured_direct", case_01),
     ("02_missing_signature", case_02),
@@ -800,6 +812,7 @@ CASES = [
     ("43_noncanonical_encoding", case_43),
     ("44_checkpoint_gap", case_44),
     ("45_event_byte_limit_breach", case_45),
+    ("46_cross_revision_receipt_id_collision", case_46),
 ]
 
 # Verdict and evidence status for 01 to 39, copied from the spec/evidence.md
@@ -851,7 +864,7 @@ def test_case(case: dict) -> None:
 
 def test_fixture_has_every_case() -> None:
     assert [x["case"] for x in FIXTURE_CASES] == [cid for cid, _ in CASES]
-    assert len(FIXTURE_CASES) == 45
+    assert len(FIXTURE_CASES) == 46
 
 
 def test_fixture_is_reproducible() -> None:
@@ -1039,3 +1052,77 @@ if __name__ == "__main__":
     else:
         print("usage: python3 tests/test_checker.py --write", file=sys.stderr)
         raise SystemExit(2)
+
+
+@pytest.mark.parametrize("order", ["form_then_abort", "abort_then_form"])
+@pytest.mark.parametrize("abort_tick", [5, 6])
+def test_release_referee_decision_conflict(order, abort_tick):
+    s, d = referee_base()
+    form = s.form(d, 5 if order == "form_then_abort" else abort_tick)
+    abort = sign(dict(id="abort1", signer="ref", kind="ABORT", tick=abort_tick, digest=d))
+    for msg in ((form, abort) if order == "form_then_abort" else (abort, form)):
+        s.add(msg)
+    s.done(d)
+    assert c.check(s.transcript()) == unknown_formation()
+
+
+def test_release_formed_obligations_survive_later_events():
+    s, d = referee_base()
+    form = s.form(d, 5)
+    s.add(form)
+    s.add(s.propose("prop2", 6, 2, d))
+    s.add(s.revoke("aA", "revA", "ACCEPT", "accA", 6))
+    s.add(form, 7)  # Exact decision replay supplies no new decision.
+    s.done(d)
+    assert c.check(s.transcript()) == honoured()
+
+
+def test_release_veto_then_both_accepts():
+    s, d = base()
+    s.add(s.response("aB", "veto1", d, "VETO", 2))
+    s.add(s.accept("aA", d, 3))
+    s.add(s.accept("aB", d, 4))
+    s.done(d)
+    assert c.check(s.transcript()) == never_formed()
+
+
+def test_release_veto_allows_new_revision():
+    s, d = base()
+    s.add(s.response("aB", "veto1", d, "VETO", 2))
+    new = digest_of(s.add(s.propose("prop2", 2, 2, d)))
+    s.add(s.accept("aA", new, 3))
+    s.add(s.accept("aB", new, 4))
+    s.done(new)
+    assert c.check(s.transcript()) == honoured()
+
+
+def test_release_veto_does_not_revoke_prior_consent():
+    s, d = referee_base()
+    s.add(s.response("aB", "veto1", d, "VETO", 4))
+    s.add(s.form(d, 5))
+    s.done(d)
+    assert c.check(s.transcript()) == honoured()
+
+
+@pytest.mark.parametrize("formed", [False, True])
+@pytest.mark.parametrize("evaluation_tick", [8, 30])
+def test_release_receipt_collision_before_verdict(formed, evaluation_tick):
+    s, d = (formed_base if formed else base)(Scenario(evaluation_tick, evaluation_tick))
+    s.outcome(d, "oA", "done", 1, 15, 16, ident="collision")
+    s.outcome(d, "oA", "missed", 0, 20, 21, ident="collision")
+    assert c.check(s.transcript()) == (unknown_performance() if formed else unknown_formation())
+
+
+@pytest.mark.parametrize("evaluation_tick", [19, 20, 21])
+def test_release_deadline_at_evaluation(evaluation_tick):
+    s, d = formed_base(Scenario(evaluation_tick, evaluation_tick))
+    expected = (c.result(None, "pending", "formed", next_deadline=20)
+                if evaluation_tick < 20 else unknown_performance())
+    assert c.check(s.transcript()) == expected
+
+
+def test_release_completion_at_deadline_is_timely():
+    s, d = formed_base(Scenario(20, 20))
+    for oid in ("oA", "oB"):
+        s.outcome(d, oid, "done", 1, 20, 20)
+    assert c.check(s.transcript()) == honoured()
