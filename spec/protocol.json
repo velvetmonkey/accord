@@ -1,0 +1,508 @@
+{
+  "protocol": "accord",
+  "version": 1,
+  "status": "Normative specification candidate. Merge approves the two DECISION items in the pull request.",
+  "precedence": "protocol.json defines the wire grammar. formation.md and evidence.md define state transitions and evidence rules. All three are normative. A conflict is a specification defect; do not infer consent.",
+  "scope": "Two principals, one agent each, one proposal chain per session, synthetic public catalogs. No delegation, amendments, settlement or external effect execution.",
+  "responses": {
+    "VETO": "Reject this exact proposal revision. This does not revoke an earlier signed acceptance. Send REVOKE for that.",
+    "ACCEPTABLE": "This exact revision can pass a local check. This is not consent. Only a separate ACCEPT can bind.",
+    "PREFERRED": "This exact revision ranks above the single public comparison revision in this response. This is not consent and reveals one comparison.",
+    "COUNTER": "Refer to one new public proposal revision. No utility table or free text is permitted. This is not consent.",
+    "CONDITIONAL": "Refer to public condition IDs already in the exact proposal. This is not consent. Send ACCEPT only after the conditions have verified true.",
+    "DEFER": "Make no decision before a public bounded retry round. No promise or extension of expiry follows.",
+    "ASK_HUMAN": "Stop automated decisions for this session. Resume only with a new valid mandate. This grants no authority."
+  },
+  "cryptography": {
+    "signature_algorithm": "Ed25519 (PureEdDSA), RFC 8032 section 5.1. No Ed25519ph, context variant or HMAC.",
+    "signed_bytes": "UTF-8 bytes of RFC 8785 canonical JSON of the complete envelope after removal of only its top-level signature member. No extra prefix and no prehash.",
+    "signature_encoding": "Unpadded base64url of the raw 64-byte Ed25519 signature: 86 ASCII characters. Reject noncanonical encodings.",
+    "public_keys": "Trusted key registry maps signer IDs to raw 32-byte Ed25519 public keys, encoded as 43-character unpadded base64url. Pin roles and keys before session evaluation. A key in an untrusted message cannot establish identity.",
+    "digest": "Lowercase hexadecimal SHA-256 of the same unsigned canonical bytes. A proposal digest includes every common and PROPOSE field except signature. An event digest includes signature and hashes the complete canonical signed event.",
+    "reason": "Independent readers can verify public-key signatures without a shared signing secret. Canonical JSON fixes the bytes each reader verifies.",
+    "research_compatibility": "Research HMAC-SHA256 with public fixture keys is not the specification. Preserve case IDs and semantic expectations when fixtures are regenerated with Ed25519. Old signatures and digests are not wire examples.",
+    "sources": [
+      "https://www.rfc-editor.org/rfc/rfc8032",
+      "https://www.rfc-editor.org/rfc/rfc8785"
+    ]
+  },
+  "wire": {
+    "grammar_notation": "Each messages entry gives all kind-specific required and optional fields. Merge these with common_fields. No other field is allowed. A vertical bar in a type is a union. const and enum are literal constraints. Types below are closed. Limits apply together.",
+    "encoding": [
+      "One UTF-8 JSON object per message, no BOM, no duplicate keys, no invalid Unicode, no floating point, exponent numbers, negative zero or numbers outside the integer range.",
+      "Wire bytes must equal RFC 8785 canonical bytes of the signed envelope. Reject whitespace, alternate escapes and alternate encodings. Nested objects are closed too.",
+      "Only ASCII IDs, fixed enums, digests and encoded cryptographic bytes are strings. No free text, utility, memory, personality, scores, explanations or attachments are permitted.",
+      "Reject unknown kinds, fields, catalog IDs and types. A Boolean is not an integer. Null is allowed only where the type explicitly permits it.",
+      "Catalog IDs, message IDs and session nonces must be assigned independently of private utility. Size limits constrain direct disclosure; they do not prove secrecy."
+    ],
+    "types": {
+      "id": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{1,32}$",
+        "max_bytes": 32
+      },
+      "digest": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "max_bytes": 64
+      },
+      "signature": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{86}$",
+        "decoded_bytes": 64
+      },
+      "uint": {
+        "type": "integer",
+        "min": 0,
+        "max": 9007199254740991
+      },
+      "positive": {
+        "type": "integer",
+        "min": 1,
+        "max": 9007199254740991
+      },
+      "boolean": {
+        "type": "boolean"
+      },
+      "ids": {
+        "type": "array",
+        "items": "id",
+        "min_items": 0,
+        "max_items": 8,
+        "unique": true,
+        "order": "ASCII lexical"
+      },
+      "pair": {
+        "type": "array",
+        "items": "id",
+        "min_items": 2,
+        "max_items": 2,
+        "unique": true,
+        "order": "principal A then principal B"
+      },
+      "accept_pair": {
+        "type": "array",
+        "items": "id",
+        "min_items": 2,
+        "max_items": 2,
+        "unique": true,
+        "order": "agent A acceptance then agent B acceptance"
+      },
+      "condition": {
+        "type": "object",
+        "required": {
+          "id": "id",
+          "observer": "id",
+          "predicate": "id"
+        },
+        "additional_fields": false
+      },
+      "conditions": {
+        "type": "array",
+        "items": "condition",
+        "min_items": 0,
+        "max_items": 8,
+        "unique_by": "id",
+        "order": "ASCII lexical by id"
+      },
+      "obligation": {
+        "type": "object",
+        "required": {
+          "id": "id",
+          "debtor": "id",
+          "action": "id",
+          "quantity": "positive",
+          "deadline": "uint",
+          "observer": "id",
+          "predicate": "id"
+        },
+        "additional_fields": false
+      },
+      "obligations": {
+        "type": "array",
+        "items": "obligation",
+        "min_items": 1,
+        "max_items": 8,
+        "unique_by": "id",
+        "order": "ASCII lexical by id"
+      },
+      "event_bytes": {
+        "type": "string",
+        "encoding": "canonical unpadded base64url of one raw event",
+        "max_decoded_bytes": 4096,
+        "max_bytes": 5462
+      }
+    },
+    "common_fields": {
+      "version": {
+        "const": 1
+      },
+      "session": "id",
+      "id": "id",
+      "signer": "id",
+      "kind": "message kind enum",
+      "tick": "uint",
+      "signature": "signature"
+    },
+    "max_signed_message_bytes": 4096,
+    "kind_byte_limits": {
+      "RESPONSE": 512,
+      "PROPOSE": 4096,
+      "MANDATE": 2048,
+      "ACCEPT": 1024,
+      "REVOKE": 1024,
+      "CONDITION": 1024,
+      "FORM": 1024,
+      "ABORT": 1024,
+      "OUTCOME": 1024,
+      "COVERAGE": 1024,
+      "SESSION": 2048,
+      "ENTRY": 8192,
+      "CHECKPOINT": 2048
+    },
+    "byte_limit_rule": "Measure the complete canonical signed envelope in UTF-8 bytes. ENTRY alone overrides the global 4096-byte limit to wrap an event. No ENTRY or CHECKPOINT may be nested as an event.",
+    "messages": {
+      "SESSION": {
+        "required": {
+          "nonce": "id",
+          "principals": "pair",
+          "agents": "pair",
+          "proposer": "id",
+          "log_operator": "id",
+          "referee": "id|null",
+          "catalog_digest": "digest",
+          "start": "uint",
+          "expiry": "uint"
+        },
+        "optional": {},
+        "rule": "Log operator signs. Trusted configuration pins this session envelope digest, roles, keys and public catalog bytes before mandates are issued. All mandates name this setup digest. SESSION is the first event."
+      },
+      "PROPOSE": {
+        "required": {
+          "proposal_id": "id",
+          "revision": "positive",
+          "previous": "digest|null",
+          "terms": "id",
+          "conditions": "conditions",
+          "obligations": "obligations",
+          "expiry": "uint",
+          "mode": {
+            "enum": [
+              "direct",
+              "referee"
+            ]
+          },
+          "referee": "id|null"
+        },
+        "optional": {},
+        "rule": "Fixed proposer agent A signs. One proposal_id per session. Terms and all condition and obligation details must match the pinned public catalog. Direct mode requires referee null; referee mode requires the session referee."
+      },
+      "MANDATE": {
+        "required": {
+          "principal": "id",
+          "agent": "id",
+          "setup_digest": "digest",
+          "terms": "ids",
+          "action": {
+            "enum": [
+              "accept",
+              "perform"
+            ]
+          },
+          "actions": "ids",
+          "max_quantity": "positive",
+          "start": "uint",
+          "expiry": "uint",
+          "revocation_id": "id"
+        },
+        "optional": {},
+        "rule": "Principal signs for its own agent and session. action accept permits consent to the listed obligation actions; action perform separately permits an external action. Empty scope lists grant no authority. revocation_id is unique within this session."
+      },
+      "RESPONSE": {
+        "required": {
+          "digest": "digest",
+          "response": {
+            "enum": [
+              "VETO",
+              "ACCEPTABLE",
+              "PREFERRED",
+              "COUNTER",
+              "CONDITIONAL",
+              "DEFER",
+              "ASK_HUMAN"
+            ]
+          },
+          "expiry": "uint",
+          "confidence": {
+            "const": "unspecified"
+          }
+        },
+        "optional": {
+          "comparison_digest": "digest",
+          "counter_digest": "digest",
+          "condition_ids": "ids",
+          "retry_round": "positive"
+        },
+        "rule": "Only the two session agents sign. expiry equals the referenced proposal expiry. confidence has no variable value. Apply response_constraints."
+      },
+      "ACCEPT": {
+        "required": {
+          "digest": "digest",
+          "mandate": "id",
+          "expiry": "uint"
+        },
+        "optional": {},
+        "rule": "Session agent signs the exact current proposal digest and its own acceptance expiry. Mandate names that agent. Only this kind supplies consent. It cannot precede verified condition proof."
+      },
+      "REVOKE": {
+        "required": {
+          "target_kind": {
+            "enum": [
+              "MANDATE",
+              "ACCEPT"
+            ]
+          },
+          "target": "id"
+        },
+        "optional": {},
+        "rule": "Principal signs to revoke its mandate revocation_id; the acceptance signer signs to revoke its exact ACCEPT message ID. No other signer can revoke it. Target must precede revocation. A revocation cannot be undone."
+      },
+      "CONDITION": {
+        "required": {
+          "digest": "digest",
+          "condition": "id",
+          "value": "boolean"
+        },
+        "optional": {},
+        "rule": "Only the proposal-named condition observer signs. Bind to this exact digest and condition. A true certificate attests an irreversible prerequisite. False or contradictory proof cannot enable consent; use a new session if certificates conflict."
+      },
+      "FORM": {
+        "required": {
+          "digest": "digest",
+          "accept_ids": "accept_pair"
+        },
+        "optional": {},
+        "rule": "Only the named referee signs, in referee mode. The named intents and all authority must still be valid at this log position. One referee decision per session."
+      },
+      "ABORT": {
+        "required": {
+          "digest": "digest"
+        },
+        "optional": {},
+        "rule": "Only the named referee signs, in referee mode, before formation and session expiry. It closes formation for this session. FORM and ABORT cannot both be valid decisions."
+      },
+      "OUTCOME": {
+        "required": {
+          "digest": "digest",
+          "obligation": "id",
+          "debtor": "id",
+          "action": "id",
+          "quantity": "uint",
+          "completed_tick": "uint",
+          "status": {
+            "enum": [
+              "done",
+              "partial",
+              "missed"
+            ]
+          }
+        },
+        "optional": {},
+        "rule": "Only the named performance observer signs. One terminal snapshot per obligation; distinct snapshots conflict. partial is a cumulative observation, not proof of failure on its own. See evidence.md. completed_tick must be after formation and at or before tick. done requires quantity at least the obligation quantity. partial and missed require a smaller quantity. missed requires tick and completed_tick at or after the deadline."
+      },
+      "COVERAGE": {
+        "required": {
+          "digest": "digest",
+          "obligation": "id",
+          "start": "uint",
+          "cutoff": "uint",
+          "quantity": "uint",
+          "complete": {
+            "const": true
+          },
+          "exclusive": {
+            "const": true
+          }
+        },
+        "optional": {},
+        "rule": "Named performance observer attests the total timely quantity and exhaustive exclusive observation from formation through cutoff. cutoff must reach the deadline to prove nonperformance. The external trust configuration must support this claim. start must equal the formation tick; cutoff must not exceed tick. quantity is the total delivered by the obligation deadline, not a sum of snapshots."
+      },
+      "ENTRY": {
+        "required": {
+          "sequence": "positive",
+          "previous": "digest|null",
+          "event_bytes": "event_bytes"
+        },
+        "optional": {},
+        "rule": "Named log operator signs. Hash complete canonical signed ENTRY for the next previous link. sequence starts at 1; first previous is null. tick is the operator tick; a valid wrapped event must have this tick. Byte-identical event replay has no new effect and is exempt from fresh event-tick matching."
+      },
+      "CHECKPOINT": {
+        "required": {
+          "last_sequence": "positive",
+          "last_entry_digest": "digest",
+          "start": "uint",
+          "cutoff": "uint",
+          "formation_complete": {
+            "const": true
+          }
+        },
+        "optional": {},
+        "rule": "Named log operator signs session, complete chain head and coverage. The log includes every submitted event from session start through cutoff inclusive; no later entry may have a tick at or below this cutoff. tick must be at least cutoff. start equals SESSION start; cutoff >= start. Conflicting checkpoints or a claimed head with omitted entries give unknown."
+      }
+    },
+    "response_constraints": {
+      "VETO": "No optional fields. Reject only this revision. Does not revoke ACCEPT.",
+      "ACCEPTABLE": "No optional fields. Not consent.",
+      "PREFERRED": "Require comparison_digest only. It names one different public catalog proposal in this session. Reveals one comparison.",
+      "COUNTER": "Require counter_digest only. It names one different public catalog proposal in this session. It does not install a new current revision.",
+      "CONDITIONAL": "Require nonempty condition_ids only. They must be a subset of the exact proposal condition IDs.",
+      "DEFER": "Require retry_round only, in 1..6 and later than the current response turn. It never extends expiry.",
+      "ASK_HUMAN": "No optional fields. Clear pending consent and pause automated consent until each principal issues a fresh mandate after this response."
+    },
+    "response_budget": {
+      "max_responses_per_session": 6,
+      "max_sessions_per_pair_and_arena_seed": 3,
+      "rule": "Count valid RESPONSE events in log order. Reject responses above the limit. A budget does not grant consent or extend expiry."
+    }
+  },
+  "proposal": {
+    "digest_fields": [
+      "version",
+      "session",
+      "id",
+      "signer",
+      "kind",
+      "tick",
+      "proposal_id",
+      "revision",
+      "previous",
+      "terms",
+      "conditions",
+      "obligations",
+      "expiry",
+      "mode",
+      "referee"
+    ],
+    "session_binding": "session names the pinned SESSION envelope, which fixes nonce, ordered principals, agent keys, catalog and log operator. Mandates bind its digest. A session ID or nonce must not be reused.",
+    "revision": "Start with revision 1 and previous null. Each new valid revision increments by one and names the prior digest. Clear every pending ACCEPT. Distinct valid proposal digests at one revision before formation block the session. Start a new session to recover.",
+    "conditions": "Each named observer must prove each prerequisite true before both ACCEPT events. Later proof never activates an earlier ACCEPT. Terms changes need a new revision and fresh ACCEPT events.",
+    "obligations": "Each obligation binds debtor principal, action, quantity, deadline, evidence observer and public predicate. Every deadline must be after formation expiry. Completion at the deadline is timely; completion after it is late."
+  },
+  "time": {
+    "authority": "One named trusted log operator assigns nondecreasing integer logical ticks. Sequence resolves events at the same tick. Principals do not trust each other wall clocks. This is not elapsed physical time.",
+    "interval": "start <= formation_tick < expiry. Proposal and ACCEPT start at their tick; mandate starts at start. Recheck all intervals at formation, including the first acceptance and its mandate.",
+    "session_bound": "SESSION start <= event tick. Proposal expiry cannot exceed session expiry. ACCEPT expiry cannot exceed proposal expiry. Mandate start < expiry. For each proposal and ACCEPT, tick < expiry.",
+    "cutoff": "A checkpoint covers every event with tick <= cutoff. Use cutoff >= session expiry to close absence of formation. A gap, untrusted cutoff or inconsistent clock gives unknown."
+  },
+  "formation": {
+    "direct": "At the second valid ACCEPT by the other agent for the same current digest, recheck all signatures, scopes, prerequisites, revocations, pause state and intervals. If all hold, form once at that sequence and tick.",
+    "referee": "Two valid ACCEPT intents do not form a deal. Require a timely valid FORM naming both intents and the current digest. Recheck all direct-mode conditions at FORM. No fallback to direct mode.",
+    "authority": "Each mandate principal and agent must match SESSION. Its terms and actions must cover the proposal, and each debtor total quantity must not exceed its principal mandate maximum. Consent mandates cannot authorise performance effects. No delegation.",
+    "revocation": "Ordered revocation before formation cancels authority or the exact pending consent. Revocation after formation cannot erase obligations. A response or proposal signature cannot replace ACCEPT.",
+    "terminal": "Form at most once. Later proposals, responses, revocations and expiry cannot erase formation. Two inconsistent referee decisions or conflicting authenticated records make evidence unknown.",
+    "fair_exchange": "Direct mode does not guarantee strong fair exchange against abort or unbounded delay. Referee mode requires trust, no collusion, durable single-decision storage, verified authority, eventual result access and a separate abort/resolve protocol. Certificate validation is not a proof of fair exchange.",
+    "boundary": "Formation creates protocol obligations only. It does not execute an action, transfer a resource or prove legal enforceability."
+  },
+  "evidence": {
+    "formation_log": "Pinned session and catalog, all raw events, contiguous signed ENTRY chain from session start, and a signed CHECKPOINT with an explicit formation completeness claim. Verify all applicable mandates, revisions, revocations, responses, proofs, intents and referee decisions.",
+    "trusted_observers": "Only observers in the pinned catalog and signed proposal may attest the exact obligation or prerequisite. Signature validity alone does not establish truthful or complete observation.",
+    "replay": "Canonical byte-identical replay is idempotent. Different authenticated bytes under one (session, id) give null verdict and unknown evidence. Invalid or foreign messages cannot supply consent; retain their rejection evidence.",
+    "performance": "A done snapshot proves full timely delivery only for the exact session, digest, debtor, action and obligation. A missed snapshot must attest final failure at or after the deadline. A partial snapshot alone proves neither full delivery nor failure.",
+    "absence": "Only exclusive trusted COVERAGE from formation through the deadline can convert missing or insufficient performance into failure. formation_complete does not imply performance coverage.",
+    "conflict": "Conflicting valid performance snapshots or coverage make that obligation unknown. An independent proved breach on a different obligation can still decide breached. Formation or log ambiguity blocks all terminal verdicts."
+  },
+  "checker": {
+    "required_output_fields": [
+      "verdict",
+      "evidence_status",
+      "formation",
+      "failed_obligations",
+      "next_deadline"
+    ],
+    "outputs": {
+      "verdict": [
+        "honoured",
+        "breached",
+        "never formed",
+        null
+      ],
+      "evidence_status": [
+        "complete",
+        "unknown",
+        "pending"
+      ],
+      "formation": [
+        "formed",
+        "absent",
+        "unknown"
+      ],
+      "failed_obligations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": {
+            "id": "id",
+            "debtor": "id"
+          },
+          "additional_fields": false
+        },
+        "unique_by": "id",
+        "order": "ASCII lexical by id",
+        "rule": "Empty unless breached. Include each proved failed obligation with its debtor."
+      },
+      "next_deadline": "Integer tick for pending; null otherwise."
+    },
+    "decision_order": [
+      {
+        "when": "Formation evidence missing, unverifiable, incomplete through evaluation cutoff or contradictory",
+        "verdict": null,
+        "evidence_status": "unknown",
+        "formation": "unknown"
+      },
+      {
+        "when": "No formation, complete valid prefix, cutoff < session expiry",
+        "verdict": null,
+        "evidence_status": "pending",
+        "formation": "absent"
+      },
+      {
+        "when": "No formation, complete verified record through session expiry",
+        "verdict": "never formed",
+        "evidence_status": "complete",
+        "formation": "absent"
+      },
+      {
+        "when": "Formation proved and at least one obligation has independent trusted failure proof",
+        "verdict": "breached",
+        "evidence_status": "complete",
+        "formation": "formed"
+      },
+      {
+        "when": "Formation proved and every obligation has trusted full timely performance proof",
+        "verdict": "honoured",
+        "evidence_status": "complete",
+        "formation": "formed"
+      },
+      {
+        "when": "Formation proved, no proved breach, and evidence needed for a due obligation is missing or contradictory",
+        "verdict": null,
+        "evidence_status": "unknown",
+        "formation": "formed"
+      },
+      {
+        "when": "Formation proved, no proved breach, and every unresolved obligation has a future deadline with no evidence conflict",
+        "verdict": null,
+        "evidence_status": "pending",
+        "formation": "formed"
+      }
+    ],
+    "status_rule": "Terminal verdicts require complete evidence for that decision. complete does not assert that every obligation has a receipt when an independent breach already decides. Null with unknown or pending is unresolved, never a forced terminal verdict.",
+    "pending_rule": "Report the session expiry for formation pending, or the earliest unresolved performance deadline. Unknown evidence takes priority over mere waiting; an explicit evidence conflict is unknown even before its deadline."
+  },
+  "limits": [
+    "Only synthetic data is in scope. No preference secrecy, fair-exchange proof or legal enforceability claim is made.",
+    "Closed fields do not hide response choices, public comparisons, timing, silence, counters or repeated proposals.",
+    "A trusted log can misstate order or completeness; signatures make its claims attributable, not true. Deployment needs a separate trust review.",
+    "The arena and reference checker are later work. No test fixture or product implementation is part of this specification."
+  ]
+}
